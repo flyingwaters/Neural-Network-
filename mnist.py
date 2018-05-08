@@ -1,3 +1,11 @@
+from tensorflow.examples.tutorials.mnist import input_data
+#import function from module
+mnist = input_data.read_data_sets("MNIST_data/",one_hot=True)
+#作为下载的 mnist的脚本，使用one_hot = True 独热编码
+#######################################################################3
+print(mnist.train.images.shape,mnist.train.labels.shape)
+print(mnist.test.images.shape,mnist.test.labels.shape)
+print(mnist.validation.images.shape,mnist.validation.labels.shape)
 import tensorflow as tf
 sess = tf.InteractiveSession()
 #这个命令将这个session 注册为默认的session 之后的运算也跑在这个session里
