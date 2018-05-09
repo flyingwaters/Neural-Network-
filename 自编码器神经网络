@@ -1,0 +1,165 @@
+#sparse coding 时，声音和图像都可以由基本的结构线性组合得到
+# 16*16的图像碎片。他们发现几乎所有的图像碎片都可以
+#由64种正交的边组合得到
+#人脸识别中，我们可以使用它们拼出人脸的不同器官，比如鼻子，嘴，眉毛，脸颊等
+#这些器官又可以向上一层拼出不同式的人脸，最后模型通过在图片中匹配这些
+#不同样式的人脸（高阶特征）来进行识别。
+#没有标注数据时，我们依然可以使用无监督的自编码器来提取特征
+#autoEncoder 即可以使用自身的高阶特征编码自己。自编码器其实也是一种神经网络，
+#它的输入和输出是一致的，它借助稀疏编码的思想，目标是使用稀疏的一些高阶特征
+#重新组合自己特征1：希望使用高阶特征来重构自己，而不只是复制像素点
+#2：期望输入/输出一致
+#Hinton 在science发表的Reducing the dimensionality of data with neural network
+#讲解了使用自编码器对数据进行降维的方法
+#Deep Belief Networks，DBN，由多层RBN堆叠而成。
+#限制中间hidden layers的节点数量，相当于降维，只能保留最重要的特征复原，将不太相关的内容去除
+#L1正则，则可以根据惩罚系数控制hidden layers 的稀疏程度
+#2:Denoising AutoEncoder(去噪自编码器），AGN加性高斯噪声
+#Masking noise 有随机遮挡的噪声，图像中一部分被置为0，模型需要从
+#其他像素的结构中推测出这些被遮挡的像素是什么
+#如果自编码器的隐含层只有一层，那么其原理类似于PCA。Hinton提出的DBN模型
+#有多个隐含层，每个隐含层都是限制波尔兹曼机（RBM-Restricte'd Boltzman Machine,一种特殊链接分布的神经网络）
+#DBN训练时，需要对每两层间进行pre-training),这个过程其实就相当于一个多层的自编码器，
+#可以将整个网络的权重初始化到一个理想的分布。然后使用标注的信息进行监督性训练
+#解决了网络过深带来的梯度消失。
+######################################################
+#实现去噪自编码器。
+import numpy as np
+import sklearn.preprocessing as prep
+import tensorflow as tf
+from tensorflow.examples.tutorials.mnist import input_data
+#参数初始化方法Xavier initialization需要预定义
+#Xavier Glorot 和 Yoshua Bengio指出
+#权重初始化得太大，那信号就会逐层缩小难以产生作用
+#权重过大，那信号就会每层间传递逐渐放大而导致失效。
+#Xavier就是让权重得均值满足0均值，同时方差为2/(n-in + n-out)
+#均匀分布和高斯分布
+def xavier_init(fan_in,fan_out,constant = 1):
+    low = -constant*np.sqrt(6.0/(fan_in+fan_out))
+    high = constant*np.sqrt(6.0/(fan_in+fan_out))
+    return tf.random_uniform((fan_in,fan_out),minval=low,maxval=high,dtype=tf.float32)
+#定义一个去噪自编码得class,方便以后使用。这个类会包含一个构建函数
+#__init__()还有一些成员函数因此会比较长
+#__init__ 函数包含输入，n_input n_hidden,transfer_function (隐藏层激活函数)
+#optimizer(优化器。默认为adam)，scale(高斯噪声系数，默认为0.1)。
+#其中，class内的scale参数做成一个placeholder，参数初始化则使用
+#initialize_weight函数，只使用一个隐含层
+class AdditiveGaussianNoiseAutoencoder(object):
+    def __init__(self,n_input,n_hidden,transfer_function=tf.nn.softplus,
+                 optimizer = tf.train.AdamOptimizer(),scale=0.1):
+        self.n_input = n_input
+        self.n_hidden = n_hidden
+        self.transfer = transfer_function
+        self.scale = tf.placeholder(tf.float32)#tf参数1 placeholder1
+        self.training_scale = scale#高斯噪声系数
+        network_weights = self._initialize_weights()
+        self.weights = network_weights
+#定义网络结构，我们创建一个维度为n_input的placeholder 。
+#然后建立一个能提取特征的隐层，输入x+噪声，self.x+scale*tf.random_normal((n_input,))
+#对加入了噪声的输入，进行w*x+b1,激活函数处理。reconstruction层w2*x+b2无激活函数
+        self.x = tf.placeholder(tf.float32,[None,self.n_input])#tf参数2  placeholder2
+        self.hidden = self.transfer(tf.add(tf.matmul(
+            self.x+scale*tf.random_normal((n_input,)),
+            self.weights['w1']),self.weights['b1']))
+        self.reconstruction = tf.add(tf.matmul(self.hidden,
+                                              self.weights['w2']),self.weights['b2'])
+        # #tf.random_normal(shape,
+        #                     mean=0.0,
+        #                     stddev=1.0,
+        #                     dtype=dtypes.float32,
+        #                     seed=None,
+        #                     name=None):
+        #output的数量
+        ################################################
+        #直接使用平方误差（Square Error）作为cost
+        #tf.subtract计算输出（self.reconstruction)与输入(self.x)之差
+        #tf.pow()求差，tf.reduce_sum求和即可得到平方误差。再定义训练操作
+        #作为优化器self.optimizer对损失self.cost进行优化。最后创建session
+        #并初始化全部参数
+        self.cost = 0.5*tf.reduce_sum(tf.pow(tf.subtract(self.reconstruction,self.x),2.0))
+        #第一个node
+        self.optimizer = optimizer.minimize(self.cost)
+        #第二个node
+        init = tf.global_variables_initializer()
+        self.sess = tf.Session()
+        self.sess.run(init)
+    ####################################################33
+    def _initialize_weights(self):
+        all_weights = dict()
+        #all_weights 字典dict()
+        #将w1,b1,w2,b2全部存入进去，最后返回all_weights.
+        all_weights['w1'] = tf.Variable(xavier_init(self.n_input,self.n_hidden))
+        #返回一个适合softplus 等激活函数的权重初分布
+        all_weights['b1'] = tf.Variable(tf.zeros([self.n_hidden],dtype = tf.float32))
+        all_weights['w2'] = tf.Variable(tf.zeros([self.n_hidden,self.n_input],dtype = tf.float32))
+        all_weights['b2'] = tf.Variable(tf.zeros([self.n_input],dtype = tf.float32))
+        return all_weights
+
+    ########################################################
+    def partial_fit(self,X):
+        cost,opt = self.sess.run((self.cost,self.optimizer),
+                                 feed_dict={self.x:X,self.scale:self.training_scale})
+        #占位符使用feed_dict={}传送数据
+        #run(fetches,feed_dict=None,options=None,run_metadata=None)
+        #run()的返回值就是fetches的执行结果，一个值，list,dictionary
+        return cost
+    ############################################################
+    def calc_total_cost(self,X):
+        return self.sess.run(self.cost,feed_dict={self.x:X,self.scale:self.training_scale})
+    #计算X作为输入的cost值
+    ###################################
+    def transform(self,X):
+        return self.sess.run(self.hidden,feed_dict={self.x:X,self.scale:self.training_scale})
+    #获取隐含层的特征
+    def generate(self,hidden=None):
+        if hidden is None:
+            hidden = np.random.normal(size = self.weights["b1"])
+            #一个权重初始化，如果有初始化就不用了
+        return self.sess.run(self.reconstruction,feed_dict = {self.hidden:hidden})
+
+    def reconstruct(self,X):
+        return self.sess.run(self.reconstruction,feed_dict={self.x:X,self.scale:self.training_scale})
+    #整体运行一遍复原过程
+    def getWeights(self):
+        return self.sess.run(self.weights['w1'])
+    def getBiases(self):
+        return self.sess.run(self.weights['b1'])
+mnist = input_data.read_data_sets('MNIST_data',one_hot=True)
+#def 一个标准化处理函数，标准化即让数据变成0均值且标准差为1的分布。
+def standard_scale(X_train,X_test):
+    preprocessor = prep.StandardScaler().fit(X_train)
+    #实例出来一个preprocessor，保证前后的预处理器是一致的
+    X_train = preprocessor.transform(X_train)
+    X_test = preprocessor.transform(X_test)
+    return X_train,X_test
+#不放回随机抽样
+def get_random_block_from_data(data,batch_size):
+    start_index = np.random.randint(0,len(data)-batch_size)
+    return data[start_index:(start_index+batch_size)]
+#############################################################X
+X_train,X_test = standard_scale(mnist.train.images,mnist.test.images)
+##
+#定义几个常用的参数，总训练成本，最大训练的轮数(epoch)设为20，batch_size设为128，并设置每隔一轮epoch就显示一次损失cost
+n_samples = int(mnist.train.num_examples)
+#shape[0]
+training_epochs = 20
+batch_size = 128
+display_step = 1
+
+autoencoder  = AdditiveGaussianNoiseAutoencoder(n_input=784,n_hidden=200,
+                                                transfer_function= tf.nn.softplus,
+                                                optimizer = tf.train.AdamOptimizer(learning_rate = 0.001),
+                                                scale = 0.01)
+#avg_cost = 0 计算batch数 样本总数/batch_size 每个不放回的抽样，avg_cost中。获得更低的cost
+for epoch in range(training_epochs):
+    avg_cost = 0
+    total_batch = int(n_samples/batch_size)
+    for i in range(total_batch):
+        batch_xs = get_random_block_from_data(X_train,batch_size)
+        cost = autoencoder.partial_fit(batch_xs)
+        avg_cost += cost / n_samples*batch_size
+    if epoch % display_step == 0:
+        print("Epoch:",'%04d'%(epoch+1),"cost=","{:.9f}".format(avg_cost))
+        #%04d -- 0填充，4
+        #{:.9f}浮点数精度{：a>10.9f}以a填充，右对齐，精度为小数点后9位
+print("Total cost:"+str(autoencoder.calc_total_cost(X_test)))
