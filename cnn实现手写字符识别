@@ -1,0 +1,133 @@
+#2012 Hinton Alex Krizhevsky 提出了深度卷积神经网络模型AlexNet，
+# 它可以算是LeNet的一种更深更宽的版本
+#一个卷积层中可以有不同的卷积核，而每一个卷积核都对应
+#一个滤波后映射出的新图像，同一个新图像中的每一个像素都来自完全相同
+#卷积核，这就是卷积核的权值共享
+#################################################################
+##为什么共享卷积核的权值参数哪？
+##全连接层会，很大的数量的参数，过多的链接会过拟合
+#图像在空间上是有组织结构的，每一个像素点在空间上和周围的像素实际上
+#是有紧密联系的，但是和太遥远的像素点就不一定有什么关联了
+#每一个神经元不需要接受全部的像素点信息，只需要接收局部的像素点作为输入
+#将所有这些神经元收到的局部信息综合起来就可以得到全局信息。
+#这样就可以将之前的全连接的模式修改为局部链接，之前隐含层
+#的每一个隐含节点都和全部像素相连，现在我们只需要将每一个隐含节点
+#链接到局部像素点
+#假设局部感受野大小是10*10，即每个隐含节点只与10*10个像素点相连
+#那么现在就只需要10*10*100万=1亿个链接，缩小了10000倍
+#但参数仍然过多，每个隐含节点都拥有100个参数
+#假设我们的局部链接方式是卷积操作,即默认每一个隐含节点的参数完全都一样
+#那我们的参数不再是1亿，而是100.不论图像多大，都是这10*10 = 100个参数
+#即卷积核的尺寸，这就是卷积对缩小参数量的贡献
+#我们不需要担心有多少隐含节点或者图片多大，参数量只与卷积核大小有关
+#这就是所谓的权值共享。
+##################################3
+#但是如果我们只有一个卷积核，我们就只能提取一种卷积核滤波的结果
+#提取一种图片特征，这不是我们期望的结果。
+#好在图像中最基本的特征很少，我们可以增加卷积核的数量来多提取一些特征
+#图像中的基本特征无非就是点和边，无论多么复杂的图像都是点和边组合而成
+#低阶特征到高阶特征。只要我们提供的卷积核数量足够多，能提取出各个方向的边或各种形态的点
+#就可以让卷积层抽象出有效而丰富的高阶特征。
+#每一个卷积核滤波器得到的图像就是一类特征的映射，即一个Feature Map
+#一般来说100个卷积核就已经很充足了。100*100 = 1万个
+#步长，padding，size*size*n_x
+#权值共享 还赋予了卷积网络对平移的容忍性，而池化层降采样则进一步降低了输出参数量
+#并赋予模型对轻度形变的容忍性
+#LeNet5 1994 最早的深层卷积神经网络之一。
+from tensorflow.examples.tutorials.mnist import input_data
+import tensorflow as tf
+mnist = input_data.read_data_sets("MNIST_data/",one_hot = True)
+sess = tf.InteractiveSession()
+
+def weight_variable(shape):
+    initial = tf.truncated_normal(shape,stddev=0.1)
+    return tf.Variable(initial)
+def bias_variable(shape):
+    initial = tf.constant(0.1,shape=shape)
+    return tf.Variable(initial)
+#要重复使用卷积层和池化层，因此为他们分别定义创建函数。
+#tf.nn.conv2d 是 TensorFlow中的2维卷积函数，参数中x是输入，w是卷积
+#的参数，[5,5,1,32]:
+#strides 代表卷积模板移动的步长，都是1代表会不遗漏地划过图片的每一个
+#点。Padding代表边界的处理方式，这里的SAME代表给边界加上Padding让卷积
+#的输出和输入保持同样的尺寸
+#tf.nn.max_pool 是Tensorflow中的最大池化函数，我们这里使用2*2的最大
+#池化，即将一个2*2的像素降为1*1的像素。步长为2
+def conv2d(x,W):
+    return tf.nn.conv2d(x,W,strides = [1,1,1,1],padding='SAME')
+    #def conv2d(input, filter, strides, padding, use_cudnn_on_gpu=True, data_format="NHWC", dilations=[1, 1, 1, 1], name=None):
+    #data_format：表示输入的格式，有两种分别为：“NHWC”和“NCHW”，默认为“NHWC”
+    # strides：表示步长：一个长度为4的一维列表，
+    # 每个元素跟data_format互相对应，表示在data_format每一维上的移动步长。
+    # 当输入的默认格式为：“NHWC”，则 strides = [batch , in_height , in_width, in_channels]。
+    # 其中 batch 和 in_channels 要求一定为1，
+    # 即只能在一个样本的一个通道上的特征图上进行移动，
+    # in_height , in_width表示卷积核在特征图的高度和宽度上移动的布长，
+    # 即 strideheight 和stridewidth 。
+
+def max_pool_2x2(x):
+    return tf.nn.max_pool(x,ksize=[1,2,2,1],strides=[1,2,2,1],padding='SAME')
+    #ksize：表示池化窗口的大小：一个长度为4的一维列表，一般为[1, height, width, 1]，因不想在batch和channels上做池化，则将其值设为1。
+#x 是特征 ，y_是真实的label。因为卷积神经网络会利用空间信息
+#1D的输入向量转为2D的图片结构
+#1*784 ---> 28*28
+#[-1,28,28,1]，-1为样本数量不固定，28*28为，height，width，channels
+#mnist手写集图片的输入格式为28*28*1，灰度图片
+x = tf.placeholder(tf.float32,[None,784])
+y_ = tf.placeholder(tf.float32,[None,10])
+x_image = tf.reshape(x,[-1,28,28,1])
+#定义第一个卷积层。我们先使用前面写好的函数进行参数初始化
+#weights和bias，这里的[5,5,1,32]代表卷积核尺寸为5*5，1个颜色
+#通道，32个不同的卷积核，然后使用convd2d函数进行卷积操作，并加上
+#bias，接着使用ReLU激活函数进行非线性处理。最后，使用最大池化函数
+#max_pool_2x2对卷积的输出结果进行池化操作
+W_conv1 = weight_variable([5,5,1,32])
+b_conv1 = bias_variable([32])
+h_conv1 = tf.nn.relu(conv2d(x_image,W_conv1)+b_conv1)
+h_pool1 = max_pool_2x2(h_conv1)
+x
+#第二个卷积层
+W_conv2 = weight_variable([5,5,32,64])
+b_conv2 = bias_variable([64])
+h_conv2 = tf.nn.relu(conv2d(h_pool1,W_conv2)+b_conv2)
+#激励层
+h_pool2 = max_pool_2x2(h_conv2)
+#池化层
+#边长变为1/4
+#reshape()---->1D向量
+W_fc1 = weight_variable([7 * 7 * 64,1024])
+b_fc1 = bias_variable([1024])
+h_pool2_flat = tf.reshape(h_pool2,[-1,7*7*64])
+#tf.reshape(x,shape)
+h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat,W_fc1)+b_fc1)
+#全连接层
+#减轻过拟合，下面使用一个dropout层，Dropout
+keep_prob = tf.placeholder(tf.float32)
+h_fc1_drop = tf.nn.dropout(h_fc1,keep_prob)
+#Softmax层，得到最后的概率输出
+W_fc2 = weight_variable([1024,10])
+b_fc2 = bias_variable([10])
+y_conv = tf.nn.softmax(tf.matmul(h_fc1_drop,W_fc2)+b_fc2)
+#softmax 层输出
+
+#定义cross entropy 优化器使用Adam，并给予一个比较小的学习速率
+cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_*tf.log(y_conv),
+                                              reduction_indices=[1]))
+train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy)
+
+#评测准确率得操作
+correct_prediction = tf.equal(tf.argmax(y_conv,1),tf.argmax(y_,1))
+accuracy = tf.reduce_mean(tf.cast(correct_prediction,tf.float32))
+##########################
+#训练过程，首先初始化所有参数，设置训练时Dropout得keep_prob比率
+#为0.5.然后使用大小为50的mini-batch，共进行20000次迭代，参与训练
+#样本数量总共为100万。其中每100次训练，我们会对准确率进行一次评测
+
+tf.global_variables_initializer().run()
+for i in range(20000):
+    batch = mnist.train.next_batch(50)
+    if i%100 == 0:
+        train_accuracy = accuracy.eval(feed_dict={x:batch[0],y_:batch[1],keep_prob:1.0})
+        print("step %d,training accuracy %g"%(i,train_accuracy))
+    train_step.run(feed_dict={x:batch[0],y_:batch[1],keep_prob:0.5})
+print("test accuracy %g"%accuracy.eval(feed_dict={x:mnist.test.images,y_:mnist.test.labels,keep_prob:1.0}))
