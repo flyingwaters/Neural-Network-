@@ -1,0 +1,103 @@
+import tensorflow as tf
+from produce import x_test,x_train,y_test,y_train,train,label
+from produce import next
+#标签的数量
+sess = tf.InteractiveSession()
+regularizer = tf.contrib.layers.l2_regularizer(0.03)
+regularizer2 = tf.contrib.layers.l1_regularizer(0.03)
+#初始化的lr单元的w,b权重
+def weight_variable(shape):
+    a=tf.Variable(tf.truncated_normal(shape=shape,stddev=0.1))
+    return a
+def bias_variable(shape):
+    a = tf.Variable(tf.constant(0.1,shape=shape))
+    return a
+def conv2d(x,W,s):
+    out =  tf.nn.conv2d(x,W,strides=s,padding='SAME')
+    return (out)
+#做一个激活relu函数
+
+x = tf.placeholder(tf.float32,[None,260000],name="input_x")
+y_ = tf.placeholder(tf.float32,[None,5],name="input_y")
+x_wav = tf.reshape(x,[-1,1,260000,1])
+#标签
+
+w_conv1 = weight_variable([1,10,1,32])
+b_conv1 = bias_variable([32])
+#
+#9*9 1个颜色通道 32个卷积核
+h_conv1 = tf.nn.relu(conv2d(x_wav,w_conv1,[1,1,20,1])+b_conv1)
+
+w_conv2 = weight_variable([1,20,32,64])
+b_conv2 = bias_variable([64])
+
+h_conv2 = tf.nn.relu(conv2d(h_conv1,w_conv2,[1,1,50,1])+b_conv2)
+######
+######
+
+w_conv3 = weight_variable([1,20,64,64])
+b_conv3 = bias_variable([64])
+
+h_conv3 = tf.nn.relu(conv2d(h_conv2,w_conv3,[1,1,10,1])+b_conv3)
+
+h_flat = tf.reshape(h_conv3,[-1,26*64])
+h_flat = tf.reshape(h_flat,[-1,13,128])
+n_hidden =1024
+
+#128个序列
+lstm_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+batch_size =100
+initial_state = lstm_cell.zero_state(batch_size,dtype=tf.float32)
+
+outputs,_= tf.nn.dynamic_rnn(lstm_cell,h_flat,dtype=tf.float32)
+outputs = tf.transpose(outputs, [1, 0, 2])
+#
+#
+#
+n_class = 5
+pred = tf.contrib.layers.fully_connected(outputs[-1],n_class,activation_fn = None)
+#
+#
+#
+'''
+w_fc1 = weight_variable([26*64, 512])
+b_fc1 = bias_variable([512])
+h_fc1 = tf.nn.relu(tf.matmul(h_flat,w_fc1)+b_fc1)
+#
+w_fc2 = weight_variable([512,5])
+#
+b_fc2 = bias_variable([5])
+h_fc2 = tf.nn.relu(tf.matmul(h_fc1,w_fc2)+b_fc2)
+'''
+loss=tf.contrib.layers.apply_regularization(regularizer,weights_list=[w_conv3,w_conv2,w_conv1])
+loss2 = tf.contrib.layers.apply_regularization(regularizer2,weights_list=[w_conv3,w_conv1,w_conv2])
+
+cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred,labels=y_))
+train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy+loss+loss2)
+correct_prediction = tf.equal(tf.argmax(pred,1),tf.argmax(y_,1))
+accuracy = tf.reduce_mean(tf.cast(correct_prediction,tf.float32))
+#
+#
+tf.global_variables_initializer().run()
+for j in range(400):
+    train_a = 0
+    for i in range(14):
+        x_train_r,y_train_r = next(100)
+        train_accuracy = accuracy.eval(feed_dict={x:x_train_r,y_:y_train_r})
+        train_a += train_accuracy/14
+        print("epoch %d step %d,batch training accuracy %g"%(j,i,train_accuracy))
+        train_step.run(feed_dict={x:x_train_r,y_:y_train_r})
+        test_a = accuracy.eval(feed_dict={x: x_test, y_: y_test})
+        print("test_accuracy is {0}".format(test_a))
+    if test_a > 0.99 and train_a >0.99:
+            break
+print("test_accuracy is {0} ".format(accuracy.eval(feed_dict={x:x_test,y_:y_test})))
+print("train_accuracy is {0}".format(train_a))
+###########################################################
+
+
+
+
+
+
+
